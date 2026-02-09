@@ -53,9 +53,9 @@ ui <- dashboardPage(
                       column(4,
                              dateRangeInput("date_range",
                                             label = "Select Date Range:",
-                                            start = ymd("2025-11-18") - days(7),
-                                            end = ymd("2025-11-18"),
-                                            max = ymd("2025-11-18")
+                                            start = ymd("2025-11-17") - days(7), # replace with Sys.Date() - days(7) in production
+                                            end = ymd("2025-11-17"), # replace with Sys.Date() in production
+                                            max = ymd("2025-11-17") # replace with Sys.Date() in production
                              ),
                              pickerInput("sites_select",
                                          label = "Select Sites:",
