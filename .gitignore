@@ -10,3 +10,4 @@ creds/mWaterCreds.yml
 creds/CDWRCreds.yml
 setup/
 .Renviron
+rsconnect
