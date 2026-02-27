@@ -88,7 +88,7 @@ cdwr_upper_clp_sites <- cdwr_lookup_table%>%pull(site_abbrev)
 
 cdwr_api_key <- read_yaml("creds/CDWRCreds.yml")$api_key
 
-water_chem <- read_parquet("data/chem/ROSS_FC_water_chemistry.parquet")
+water_chem <- read_parquet("data/chem/ROSS_FC_water_chemistry_20251114.parquet")
 
 #Parameter plot bounds
 plot_param_table <- tibble(
@@ -99,7 +99,7 @@ plot_param_table <- tibble(
   upper = c(20, 40, 9, 10, 60, 1, 1, 2, 5),
   units = c("°C", "NTU", "", "mg/L", "µS/cm", "RFU", "RFU", "ft", "mg/L")
 )
-toc_model_bounds <- read_parquet("data/chem/ROSS_FC_water_chemistry.parquet")%>%
+toc_model_bounds <- water_chem%>%
   summarise(TOC_lower  = min(TOC, na.rm = T),
             TOC_upper = max(TOC, na.rm = T))
 
