@@ -7,7 +7,7 @@
 # Simply load required packages - shinyapps.io will automatically detect and install them
 suppressMessages({
   #library(furrr)
-  library(ross.wq.tools)
+  # library(ross.wq.tools)
   # Date/time handling
   library(zoo)
   library(padr)
