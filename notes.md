@@ -27,3 +27,5 @@ install.packages("ggridges")
 ```
 
 
+# plot_longitudinal.R 
+this was erroring out when I was trying to run t app, so  mod into t scripts forward to hopefully prevent it from being sourced .

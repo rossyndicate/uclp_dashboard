@@ -1,3 +1,5 @@
+# this was erroring out when attempting to rend the shiny app 
+# moved it out of the functions folder so it's not getting sourced. 
 
 library(tidyverse)
 library(lubridate)
