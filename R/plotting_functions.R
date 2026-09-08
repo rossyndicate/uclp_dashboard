@@ -1,7 +1,14 @@
-#' Plot TOC Forecast
-#' @param forecast_data Tibble containing the forecast data
-#' @param title_suffix Character string to append to the title
-#' @return A plotly object
+#' Plot Total Organic Carbon (TOC) Forecast
+#' Generates an interactive Plotly visualization displaying predicted TOC concentrations
+#' (Intake or Distributed) with percentile uncertainty ribbons, reference thresholds,
+#' and outdated-forecast warnings.
+#'
+#' @param forecast_data Data frame or tibble containing forecast dates (`date_24h`)
+#'   and predicted TOC quantile columns (`min`, `q25`, central, `q75`, `max`).
+#' @param title_suffix Character string to append to the plot title. Defaults to `""`.
+#'
+#' @return A `plotly` graph object.
+#' @export
 plot_toc_forecast <- function(forecast_data, title_suffix = "") {
   # Define RGBA colors
   col_red    <- 'rgba(255, 0, 0, 0.2)'
@@ -20,6 +27,13 @@ plot_toc_forecast <- function(forecast_data, title_suffix = "") {
 
   # Extract creation date
   forecast_date <- if("date" %in% names(forecast_data)) unique(forecast_data$date)[1] + days(1) else "Unknown"
+  #check if forecast_date is the sys.date
+  if (forecast_date == Sys.Date()) {
+    forecast_date <- T
+  } else {
+    forecast_current = F
+  }
+  forecast_data <- forecast_data %>% filter(date_24h >= forecast_date) %>% arrange(date_24h)
 
   # Identify column names (Intake vs Distributed)
   # Intake uses: intake_q_swe_pred_min, etc.
@@ -61,6 +75,7 @@ plot_toc_forecast <- function(forecast_data, title_suffix = "") {
       line = list(color = "black", width = 2.5),
       name = hover_label,
       text = ~paste0(
+        "Date: ", .data[["date_24h"]], "<br>",
         "Max: ", .data[[y_max]], " mg/L<br>",
         "Q75: ", .data[[y_q75]], " mg/L<br>",
         "Median/Mean: ", .data[[y_col]], " mg/L<br>",
@@ -69,13 +84,25 @@ plot_toc_forecast <- function(forecast_data, title_suffix = "") {
       ),
       hovertemplate = "%{text}<extra></extra>"
     ) %>%
+    #add a vertical line for today
+    add_lines(
+      x = c(Sys.Date(), Sys.Date()),
+      y = c(min(forecast_data[[y_min]], na.rm = TRUE) - 0.2, max(forecast_data[[y_max]], na.rm = TRUE) + 0.2),
+      line = list(color = "black", width = 1.5, dash = "dot"),
+      name = "Today",
+      hoverinfo = "none"
+    ) %>%
     layout(
       title = list(
         text = paste0(title_suffix, "<br><sup>Forecast Created: ", forecast_date, " 3:00 AM MT</sup>"),
         x = 0.5,
         y = 0.95
       ),
-      xaxis = list(title = "Date"),
+      xaxis = list(title = "Date",
+                   range = c(
+                     as.Date(min(forecast_data$date_24h, na.rm = TRUE)) - hours(6),
+                     as.Date(max(forecast_data$date_24h, na.rm = TRUE)) + hours(6)
+                   )),
       yaxis = list(
         title = "Predicted TOC (mg/L)",
         range = c(min(forecast_data[[y_min]], na.rm = TRUE) - 0.2, max(forecast_data[[y_max]], na.rm = TRUE) + 0.2)
@@ -86,6 +113,28 @@ plot_toc_forecast <- function(forecast_data, title_suffix = "") {
       margin = list(t = 50, b = 30, l = 50, r = 20)
     ) %>%
     config(displayModeBar = FALSE)
+
+  if(!forecast_current) {
+    # add red text saying that the forecast was not generated today
+    p <- p %>%
+      add_markers(
+        data = forecast_data[as.Date(forecast_data$date_24h) == as.Date(forecast_date), ],
+        x = ~date_24h,
+        y = as.formula(paste0("~", y_col)),
+        marker = list(color = "red", size = 10, symbol = "circle"),
+        name = "Forecast Start Point",
+        showlegend = FALSE,
+        hoverinfo = "none"
+      ) %>%
+      add_annotations(
+        text = "NOTE: Forecast was not generated today and may be outdated, due to lack of HEFS Flow Forecast",
+        xref = "paper", yref = "paper",
+        x = 0.5, y = 1.05,
+        showarrow = FALSE,
+        font = list(color = "red", size = 14)
+      )
+
+  }
 
   return(p)
 }

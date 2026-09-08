@@ -8,7 +8,7 @@
 #' site, timestamp, and parameters ("FDOM Fluorescence", "Temperature", "Specific Conductivity", "Turbidity")
 #' @param toc_models A list of `xgb.Booster` objects. By default, it uses `toc_realtime_model`,
 #' which is an ensemble loaded via:
-#' `map(1:3, ~xgb.load(modelfile = paste0("data/models/ross_only_toc_xgboost_model_fold",.x, "_20260224.ubj")))`.
+#' `map(1:4, ~xgb.load(modelfile = paste0("data/models/ross_only_toc_xgboost_model_fold",.x, "_20260224.ubj")))`.
 #' @param scaling_params_file_path String. File path to the saved scaling parameters (RDS format)
 #' used to normalize features to the training scale.
 #' @param summarize_interval String. The time interval for data summarization (e.g., "1 hour", "1 day").
@@ -37,7 +37,8 @@
 #'
 #' @examples
 #' # Loading the ensemble
-#' toc_realtime_model <- map(1:3, ~xgb.load(
+#' # Note: The number of folds should match the number of models loaded.
+#' toc_realtime_model <- map(1:4, ~xgb.load(
 #'   modelfile = paste0("data/models/ross_only_toc_xgboost_model_fold", .x, "_20260224.ubj")
 #' ))
 #'

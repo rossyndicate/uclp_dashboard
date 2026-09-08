@@ -84,17 +84,19 @@ home_server <- function(id, loaded_data, auth) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
-    # 0. Load Snapshot immediately for the map
+    # 0. Load full cached dataset ONCE, derive the map snapshot from it
+    full_cached_data <- reactiveVal(NULL)
     snapshot_data <- reactiveVal(NULL)
     distributed_toc_data <- reactiveVal(NULL)
     intake_forecast_data <- reactiveVal(NULL)
 
     # Load initial snapshot (fastest path to map)
     observe({
-    req(is.character(auth$user) )
 
       tryCatch({
         df <- arrow::read_parquet(snapshot_url, as_data_frame = TRUE)
+        full_cached_data(df)
+
         latest_snapshot <- df %>%
           group_by(site, parameter) %>%
           filter(DT_round == max(DT_round, na.rm = TRUE)) %>%
@@ -158,7 +160,7 @@ home_server <- function(id, loaded_data, auth) {
         # but apply_toc_model has a fallback to pull it if NULL.
         res <- apply_toc_model(
           sensor_data = sensor_snapshot,
-          scaling_params_file_path = "data/models/scaling_params_toc_20260518.parquet",
+          scaling_params_file_path = "data/models/scaling_params_toc_20260715.parquet",
           summarize_interval = "15 mins", # Match the choices in the ui
           time_col = "DT_round",
           value_col = "mean"
@@ -241,8 +243,16 @@ home_server <- function(id, loaded_data, auth) {
 
       # Add Modeled TOC estimates if available
       rt_toc <- realtime_toc_snapshot()
+
       if (!is.null(rt_toc) && nrow(rt_toc) > 0) {
-        latest_readings <- bind_rows(latest_readings, rt_toc)
+      #check if rt_toc is > 24 hours old
+      rt_toc <- rt_toc %>%
+        filter(DT_round_MT >= (Sys.time() - hours(24)))
+
+        latest_readings <- bind_rows(latest_readings, rt_toc)%>%
+        #convert Depth to ft if it is in M
+        mutate(mean = ifelse(parameter == "Depth" & units == "m", mean * 3.28084, mean),
+               units = ifelse(parameter == "Depth" & units == "m", "ft", units))
       }
 
       snapshot_timestamp <- max(latest_readings$DT_round_MT, na.rm = TRUE)
@@ -375,7 +385,7 @@ home_server <- function(id, loaded_data, auth) {
       intake_cached_data <- intake_forecast_data() %>%
         filter(date == max(date, na.rm = TRUE)) %>% # Get the most recent forecast date
         mutate(across(contains("intake_q_swe_pred"), ~ round(.x, 2))) %>%
-        filter(date_24h <= Sys.Date() + days(10)) #Limit to the next 10 days
+        filter(date_24h <= max(date, na.rm = TRUE) + days(7)) #Limit to the next 7 days
 
       plot_toc_forecast(intake_cached_data)
     })
@@ -386,9 +396,8 @@ home_server <- function(id, loaded_data, auth) {
       full_sync_done = reactive({ sync_status$all_done }),
       snapshot_ready = reactive({ !is.null(snapshot_data()) }),
       cached_df = reactive({
-        # Return the full dataset that was loaded for the snapshot
-        # This will be available to the main server to avoid re-downloading
-        arrow::read_parquet(snapshot_url, as_data_frame = TRUE)
+        req(full_cached_data())
+        full_cached_data()
       })
     ))
   })

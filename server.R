@@ -115,7 +115,9 @@ server <- function(input, output, session) {
 
       home_state$set_status("wet_api", "done")
 
-      #### ---- HYDROVU & CONTRAIL API PULLS (MOCKED FOR NOW) ---- ####
+      #### ---- HYDROVU API PULL---- ####
+      incProgress(0.1, detail = "Retrieving HydroVu data...")
+
       home_state$set_status("hydrovu_api", "loading")
       hv_site <- c("pbd")
 
@@ -240,24 +242,24 @@ server <- function(input, output, session) {
           end_date <- as.character(Sys.Date() + days(1))
           start_date <- as.character(Sys.Date() - days(7))
 
+          make_empty_row <- function(msg = "No Data") {
+            site_row %>%
+              as_tibble() %>%
+              mutate(
+                current_flow_cfs = NA_real_,
+                flow_slope = NA_real_,
+                trend = msg,
+                nested_data = list(tibble(DT_round = as.POSIXct(character()), flow = numeric(), abbrev = character()))
+              ) %>%
+              select(abbrev, station_name, data_source, water_source, gnis_id, latitude, longitude,
+                     current_flow_cfs, flow_slope, trend, structure_type, site_type = station_type, nested_data)
+          }
+
           flow_sites_res <- sites %>%
             split(1:nrow(.)) %>%
             map_dfr(function(site_row) {
               site_id <- site_row$abbrev
               param_code <- site_row$parameter
-
-              make_empty_row <- function(msg = "No Data") {
-                site_row %>%
-                  as_tibble() %>%
-                  mutate(
-                    current_flow_cfs = NA_real_,
-                    flow_slope = NA_real_,
-                    trend = msg,
-                    nested_data = list(tibble(DT_round = as.POSIXct(character()), flow = numeric(), abbrev = character()))
-                  ) %>%
-                  select(abbrev, station_name, data_source, water_source, gnis_id, latitude, longitude,
-                         current_flow_cfs, flow_slope, trend, structure_type, site_type = station_type, nested_data)
-              }
 
               result <- tryCatch({
                 flow_data <- get_telemetry_ts(
@@ -408,6 +410,7 @@ server <- function(input, output, session) {
           arrange(site, parameter, DT_round) %>%
           distinct(site, parameter, DT_round, .keep_all = TRUE) %>%
           ungroup()
+
       }
 
       print("--- DATA INITIALIZATION COMPLETE ---")
@@ -432,7 +435,7 @@ server <- function(input, output, session) {
     sites_sel <- filter(site_table, site_name %in% input$sites_select) %>% pull(site_code)
 
     # Ensure we include required parameters for TOC model even if not selected for other plots
-    required_toc_params <- c("FDOM Fluorescence", "Temperature", "Specific Conductivity", "Turbidity", "Chl-a Fluorescence")
+    required_toc_params <- c("FDOM Fluorescence", "Temperature", "Specific Conductivity", "Turbidity")
     all_params <- unique(c(input$parameters_select, required_toc_params))
 
     loaded_data() %>%
@@ -672,8 +675,7 @@ server <- function(input, output, session) {
 
     # Apply TOC model on relevant data
     toc_plot_data <- apply_toc_model(sensor_data = input_data,
-                                     #toc_model_file_path = "data/models/ross_only_toc_xgboost_models_light_20260224.rds",
-                                     scaling_params_file_path = "data/models/scaling_params_toc_20260518.parquet",
+                                     scaling_params_file_path = "data/models/scaling_params_toc_20260715.parquet",
                                      #summarizing model input results to user selected timestep (15 min -> 1 day)
                                      summarize_interval = input$data_timestep,
                                      time_col = "DT_round",

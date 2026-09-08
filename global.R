@@ -39,7 +39,6 @@ suppressMessages({
   library(devtools) # this might be needed as ross.wq and cddsr are not on cran
   # Shiny
   library(shiny)
-  library(shinymanager) # maybe?
   library(shinycssloaders)
   # library(shinyTime)
   library(bslib)
@@ -107,7 +106,7 @@ cdwr_api_key <- tryCatch({
   NULL
 })
 
-water_chem <- read_parquet("data/chem/ROSS_FC_water_chemistry_20251114.parquet")
+water_chem <- read_parquet("data/chem/ROSS_FC_water_chemistry_2026714.parquet")
 
 #Parameter plot bounds
 plot_param_table <- tibble(
@@ -115,17 +114,25 @@ plot_param_table <- tibble(
                  "Specific Conductivity", "Chl-a Fluorescence", "FDOM Fluorescence", "Depth",
                 "TOC"),
   lower = c(10, 0.1, 6.5, 6, 20, 0.1, 0.1, 0.1, 2),
-  upper = c(20, 40, 9, 10, 60, 1, 1, 2, 5),
+  upper = c(30, 40, 9, 10, 60, 1, 1, 2, 5),
   units = c("°C", "NTU", "", "mg/L", "µS/cm", "RFU", "RFU", "ft", "mg/L")
 )
-toc_model_bounds <- water_chem%>%
-  summarise(TOC_lower  = min(TOC, na.rm = T),
-            TOC_upper = max(TOC, na.rm = T))
+toc_model_bounds <-  tibble(TOC_lower  = 0.916, TOC_upper = 7.9)
 
 toc_forecast_sites <- read_csv("data/toc_forecast_location_metadata.csv", show_col_types = F)%>%filter(model_version == "Distributed")
 
 # Load TOC real-time model ensemble
-toc_realtime_model <- map(1:3, ~xgb.load(
-  modelfile = paste0("data/models/ross_only_toc_xgboost_model_fold", .x, "_20260518.ubj")
+toc_realtime_model <- map(1:4, ~xgb.load(
+  modelfile = paste0("data/models/ross_only_toc_xgboost_model_fold", .x, "_20260715.ubj")
 ))
+
+model_files <- list.files("data/models/", pattern = ".ubj", full.names = TRUE)
+#load each file and label with fold number and date from string
+all_realtime_toc_models <- map(1:length(model_files), function(i){
+  fold_num <- gsub("fold", "", str_extract(model_files[i], "fold\\d+"))
+  model_date_str <- str_extract(model_files[i], "\\d{8}")
+  model <- xgb.load(modelfile = model_files[i])
+  list(fold = fold_num, date = model_date_str, model = model)
+})
+
 
