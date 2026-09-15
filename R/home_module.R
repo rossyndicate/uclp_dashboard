@@ -209,7 +209,7 @@ home_server <- function(id, loaded_data, auth) {
     # Render Home Map (Static Base Only)
     output$home_map <- renderLeaflet({
       leaflet(options = leafletOptions(minZoom = 8, maxZoom = 15)) %>%
-        addProviderTiles(providers$CartoDB.Positron, group = "Clean") %>%
+        addProviderTiles(providers$OpenStreetMap, group = "Clean")%>%
         addProviderTiles(providers$Esri.WorldTopoMap, group = "Topographic") %>%
         addProviderTiles(providers$Esri.WorldImagery, group = "Satellite") %>%
         # Set bounds to the CLP basin area

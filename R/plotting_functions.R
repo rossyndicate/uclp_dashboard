@@ -24,12 +24,11 @@ plot_toc_forecast <- function(forecast_data, title_suffix = "") {
       line = list(color = "rgba(0, 0, 0, 0.4)", width = 1.5, dash = "dash")
     )
   })
-
   # Extract creation date
   forecast_date <- if("date" %in% names(forecast_data)) unique(forecast_data$date)[1] + days(1) else "Unknown"
   #check if forecast_date is the sys.date
   if (forecast_date == Sys.Date()) {
-    forecast_date <- T
+    forecast_current <- T
   } else {
     forecast_current = F
   }

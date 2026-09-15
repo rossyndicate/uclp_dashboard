@@ -7,12 +7,12 @@ server <- function(input, output, session) {
 
   # Call secure_server to check credentials
   #Comment out for local testing without credentials
-  res_auth <- secure_server(
-    check_credentials = check_credentials(
-      db = "setup/credentials.sqlite",
-      passphrase = Sys.getenv("DB_PASSWORD")
-    )
-  )
+  # res_auth <- secure_server(
+  #   check_credentials = check_credentials(
+  #     db = "setup/credentials.sqlite",
+  #     passphrase = Sys.getenv("DB_PASSWORD")
+  #   )
+  # )
 
   #setup loaded data
   loaded_data <- reactiveVal(NULL)
@@ -242,25 +242,24 @@ server <- function(input, output, session) {
           end_date <- as.character(Sys.Date() + days(1))
           start_date <- as.character(Sys.Date() - days(7))
 
-          make_empty_row <- function(msg = "No Data") {
-            site_row %>%
-              as_tibble() %>%
-              mutate(
-                current_flow_cfs = NA_real_,
-                flow_slope = NA_real_,
-                trend = msg,
-                nested_data = list(tibble(DT_round = as.POSIXct(character()), flow = numeric(), abbrev = character()))
-              ) %>%
-              select(abbrev, station_name, data_source, water_source, gnis_id, latitude, longitude,
-                     current_flow_cfs, flow_slope, trend, structure_type, site_type = station_type, nested_data)
-          }
-
           flow_sites_res <- sites %>%
             split(1:nrow(.)) %>%
             map_dfr(function(site_row) {
               site_id <- site_row$abbrev
               param_code <- site_row$parameter
 
+              make_empty_row <- function(msg = "No Data") {
+                site_row %>%
+                  as_tibble() %>%
+                  mutate(
+                    current_flow_cfs = NA_real_,
+                    flow_slope = NA_real_,
+                    trend = msg,
+                    nested_data = list(tibble(DT_round = as.POSIXct(character()), flow = numeric(), abbrev = character()))
+                  ) %>%
+                  select(abbrev, station_name, data_source, water_source, gnis_id, latitude, longitude,
+                         current_flow_cfs, flow_slope, trend, structure_type, site_type = station_type, nested_data)
+              }
               result <- tryCatch({
                 flow_data <- get_telemetry_ts(
                   abbrev = site_id,
@@ -1006,7 +1005,6 @@ server <- function(input, output, session) {
   })
   # Create the map of the flow sites
   output$map <- renderLeaflet({
-
 
     sites <- flow_sites_data()%>%
       mutate(group_status = case_when(trend == "increasing" & site_type == "Stream Gage" ~ "river_up",

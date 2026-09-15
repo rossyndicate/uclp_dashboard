@@ -1,0 +1,38 @@
+name: Send Automated Report Email
+
+on:
+  schedule:
+    - cron: '0 18 * * 5'   # Friday 12:00 PM MDT (summer) — will run 1 hr later in MT during MST
+  workflow_dispatch: {}
+
+jobs:
+  send-email:
+    runs-on: ubuntu-latest
+    env:
+      TZ: America/Denver
+      CDWR_API_KEY: ${{ secrets.CDWR_API_KEY }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      DASHBOARD_LINK: ${{ secrets.DASHBOARD_LINK }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'release'
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev
+
+      - name: Install R dependencies
+        run: |
+          install.packages(c(
+            "arrow", "ggplot2", "dplyr", "lubridate", "httr2", "base64enc",
+            "tidyverse", "xgboost", "glue", "padr", "yaml", "remotes"
+          ))
+          remotes::install_github("anguswg-ucsb/cdssr")
+        shell: Rscript {0}
+
+      - name: Run report script
+        run: Rscript gha_scripts/send_report.R
