@@ -105,6 +105,13 @@ cdwr_api_key <- tryCatch({
   warning("CDWR API key not found in creds/CDWRCreds.yml")
   NULL
 })
+# Carto API Key handling with fallback
+# carto_api_key <- tryCatch({
+#   read_yaml("creds/CartoCreds.yml")$api_key
+# }, error = function(e) {
+#   warning("Carto API key not found in creds/CartoCreds.yml")
+#   NULL
+# })
 
 water_chem <- read_parquet("data/chem/ROSS_FC_water_chemistry_2026714.parquet")
 
