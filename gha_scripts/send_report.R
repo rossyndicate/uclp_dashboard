@@ -129,7 +129,6 @@ p_flow <- ggplot(flow_data, aes(x = DT_round, y = flow, color = site_name)) +
   ROSS_theme+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-p_flow
 
 png_flow_path <- tempfile(fileext = ".png")
 tryCatch({
