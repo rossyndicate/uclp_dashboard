@@ -15,6 +15,7 @@ jobs:
       EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
       EMAIL_TO: ${{ secrets.EMAIL_TO }}
       DASHBOARD_LINK: ${{ secrets.DASHBOARD_LINK }}
+      STAFF_EMAIL: ${{ secrets.STAFF_EMAIL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,17 +23,23 @@ jobs:
         with:
           r-version: 'release'
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev
-
-      - name: Install R dependencies
-        run: |
-          install.packages(c(
-            "arrow", "ggplot2", "dplyr", "lubridate", "httr2", "base64enc",
-            "tidyverse", "xgboost", "glue", "padr", "yaml", "remotes"
-          ))
-          remotes::install_github("anguswg-ucsb/cdssr")
-        shell: Rscript {0}
+      - name: Setup - Install R packages
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: 1
+          packages: |
+            any::arrow
+            any::ggplot2
+            any::dplyr
+            any::lubridate
+            any::httr2
+            any::base64enc
+            any::tidyverse
+            any::xgboost
+            any::glue
+            any::remotes
+            any::yaml
+            github::anguswg-ucsb/cdssr
 
       - name: Run report script
         run: Rscript gha_scripts/send_report.R

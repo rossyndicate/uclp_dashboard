@@ -37,6 +37,7 @@ apply_cleaning_filters <- function(df, value_col = "mean", new_value_col = "mean
         !is.na(auto_flag) & auto_flag == "drift"  & parameter == "Turbidity" & !!sym(value_col) <= 15 ~ !!sym(value_col), # Drift below 15 NTU can be neglected (not cause for alarms)
         !is.na(auto_flag) & auto_flag == "outside of seasonal range"  & parameter == "Temperature" & !!sym(value_col) <= 25 & season %nin% c("winter_baseflow", "snowmelt") ~ !!sym(value_col), # overflagged temp during summer
         !is.na(auto_flag) & auto_flag == "outside of seasonal range"  & parameter == "Temperature" & !!sym(value_col) <= 15 ~ !!sym(value_col), # overflagged temp at lower range during winter
+        !is.na(auto_flag) & auto_flag == "outside of seasonal range"  & parameter == "Specific Conductivity" & !!sym(value_col) >= 15 & !!sym(value_col) <= 100  ~ !!sym(value_col),
                 is.na(auto_flag) & is.na(mal_flag) ~ !!sym(value_col),  # Otherwise keep original value
         TRUE ~ NA_real_ # if it is not one of these cases, set to NA
       ),

@@ -14,6 +14,7 @@ library(cdssr)
 
 # Source custom functions
 walk(list.files("R", full.names = TRUE), source)
+source("gha_scripts/email_templates.R")
 #setup ross theme
 
 require(tidyverse)
@@ -35,7 +36,16 @@ if ({
 }
 
 # --- 0. Secrets / config (pulled from GitHub Actions env vars) ---
-required_secrets <- c("CDWR_API_KEY", "RESEND_API_KEY", "EMAIL_FROM", "EMAIL_TO", "DASHBOARD_LINK")
+# PREVIEW_ONLY=true  -> build the email and open it in your browser; nothing is sent
+# EMAIL_TEMPLATE    -> "classic" (default), "banner", or "minimal"
+
+preview_only <- FALSE
+email_template <- "classic"
+
+required_secrets <- "CDWR_API_KEY"
+if (!preview_only) {
+  required_secrets <- c(required_secrets, "RESEND_API_KEY", "EMAIL_FROM", "EMAIL_TO", "DASHBOARD_LINK", "STAFF_EMAIL")
+}
 missing <- required_secrets[Sys.getenv(required_secrets) == ""]
 if (length(missing) > 0) {
   stop("Missing required secrets: ", paste(missing, collapse = ", "))
@@ -46,6 +56,8 @@ resend_api_key <- Sys.getenv("RESEND_API_KEY")
 email_from <- Sys.getenv("EMAIL_FROM")
 email_to <- Sys.getenv("EMAIL_TO")
 dashboard_link <- Sys.getenv("DASHBOARD_LINK")
+staff_email <- Sys.getenv("STAFF_EMAIL")
+if (preview_only && dashboard_link == "") dashboard_link <- "#"
 
 message("=== Starting weekly report generation ===")
 
@@ -122,7 +134,7 @@ p_flow <- ggplot(flow_data, aes(x = DT_round, y = flow, color = site_name)) +
                                 "CLP @ Canyon Mouth" = "#002EA3",
                                 "Chambers Lake Outflow" = "#1E4D2B",
                                 "North Fork below Seaman Res" = "#E70870",
-                                "Munroe Canal" = "#56104E")) +
+                                "Munroe Canal" = "#FFCA3A")) +
   labs(x = "Date",
        y = "Discharge (cfs)",
        color = "Site") +
@@ -137,10 +149,84 @@ tryCatch({
   stop(glue("Failed to save streamflow plot: {conditionMessage(e)}"))
 })
 
-flow_img_b64 <- base64enc::base64encode(png_flow_path)
-flow_img_tag <- sprintf('<img src="data:image/png;base64,%s" style="max-width:100%%;" />', flow_img_b64)
 message("Step: Streamflow plot complete.")
+# --- Flow Forecast
+source("gha_scripts/get_hefs_ensembles_cbrfc.R")
+#Pull most recent forecast
 
+
+hefs_raw <- get_hefs_ensembles_cbrfc(ID = "FTDC2", date = today_mt)
+
+hefs_tidy <- hefs_raw %>%
+  mutate(date_time = with_tz(date_time, tzone = "America/Denver")) %>%
+  pivot_longer(cols = starts_with("ens_"),
+               names_to = "ensemble_member",
+               values_to = "canyon_mouth_cfs") %>%
+  filter(date_time <= today_mt + days(7))%>%
+  summarise(median_cfs = median(canyon_mouth_cfs, na.rm = TRUE),
+            q5_cfs = quantile(canyon_mouth_cfs, probs = 0.05, na.rm = TRUE),
+            q10_cfs = quantile(canyon_mouth_cfs, probs = 0.1, na.rm = TRUE) ,
+            q25_cfs = quantile(canyon_mouth_cfs, probs = 0.25, na.rm = TRUE),
+            q75_cfs = quantile(canyon_mouth_cfs, probs = 0.75, na.rm = TRUE),
+            q90_cfs = quantile(canyon_mouth_cfs, probs = 0.9, na.rm = TRUE) ,
+            q95_cfs = quantile(canyon_mouth_cfs, probs = 0.95, na.rm = TRUE) ,
+            .by = c(date_time))
+
+canyon_q <- cdssr::get_telemetry_ts(
+  abbrev = "CLAFTCCO",
+  start_date = today_mt - days(2),
+  end_date = today_mt + days(1),
+  api_key = cdwr_api_key,
+  timescale = "hour"
+) %>%
+  mutate(date_time = force_tz(datetime, tzone = "America/Denver")) %>%
+  select(date_time, canyon_mouth_cfs = meas_value)
+
+p_flow_forecast <- ggplot(hefs_tidy, aes(x = date_time)) +
+  geom_line(data = canyon_q, aes(y = canyon_mouth_cfs, color = "Gage Observed"), linewidth = 1) +
+
+  # Ribbons mapped to aesthetic fill labels for the legend
+  geom_ribbon(aes(ymin = q5_cfs, ymax = q95_cfs, fill = "5%–95% Interval"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q10_cfs, ymax = q90_cfs, fill = "10%–90% Interval"), alpha = 0.3) +
+  geom_ribbon(aes(ymin = q25_cfs, ymax = q75_cfs, fill = "25%–75% Interval"), alpha = 0.3) +
+  # Lines
+  geom_line(aes(y = median_cfs, color = "Median Forecast"), linetype = "dotted", linewidth = 1) +
+  geom_vline(xintercept = with_tz(Sys.time(), tz = "America/Denver"), linetype = "dotted",
+             color = "black", linewidth = 0.7) +
+  # Custom fill scale mapping labels to specific colors
+  scale_fill_manual(
+    values = c(
+      "5%–95% Interval"  = "lightblue",
+      "10%–90% Interval" = "blue",
+      "25%–75% Interval" = "darkblue"
+    ),
+    breaks = c("5%–95% Interval", "10%–90% Interval", "25%–75% Interval")
+  ) +
+  scale_color_manual(
+    values = c(
+      "Gage Observed" = "darkgrey",
+      "Median Forecast" = "black"
+    )
+  ) +
+  labs(
+    title = "Canyon Mouth Flow Forecast (HEFS)",
+    x = "Date",
+    y = "Discharge (cfs)",
+    fill = "Probable Forecast Ranges",
+    color = "Canyon Mouth Flow"
+  ) +
+  ROSS_theme+
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+png_flow_forecast_path <- tempfile(fileext = ".png")
+tryCatch({
+  ggsave(png_flow_forecast_path, p_flow_forecast, width = 10, height = 6, dpi = 300)
+}, error = function(e) {
+  stop(glue("Failed to save flow forecast plot: {conditionMessage(e)}"))
+})
 
 # --- Pull any data straight from the raw GitHub URL ---
 message("Step: Downloading data files from GitHub...")
@@ -285,22 +371,16 @@ tryCatch({
   stop(glue("Failed to save sensor data plot: {conditionMessage(e)}"))
 })
 
-sensor_img_b64 <- base64enc::base64encode(png_sensor_path)
-sensor_img_tag <- sprintf('<img src="data:image/png;base64,%s" style="max-width:100%%;" />', sensor_img_b64)
 message("Step: Sensor data plot complete.")
 
 # --- Forecast plot ---
-col_red    <- "red"
-col_orange <- "orange"
-col_green  <- "green"
-col_blue   <- "blue"
 
 message("Step: Downloading TOC forecast data...")
 forecast_data <- tryCatch({
   read_parquet(intake_forecast_url) %>%
     mutate(date_24h = with_tz(date_24h, tzone = "America/Denver")) %>%
     mutate(date_24h = as.Date(date_24h)) %>%
-    filter(date == max(date, na.rm = TRUE) & date_24h <= today_mt + days(7)) %>%
+    filter(date == max(date, na.rm = TRUE) & date_24h <= today_mt + days(7) & date_24h >= today_mt) %>%
     arrange(date_24h)
 }, error = function(e) {
   stop(glue("Failed to download/read TOC forecast data from {intake_forecast_url}: {conditionMessage(e)}"))
@@ -308,9 +388,9 @@ forecast_data <- tryCatch({
 message(glue("  Forecast data loaded: {nrow(forecast_data)} rows."))
 
 forecast_date <- force_tz(unique(forecast_data$date)[1], tz = "America/Denver")
-forecast_current <- forecast_date == today_mt
+forecast_current <- forecast_date == today_mt - days(1) # Forecast is generated at 3 AM MT for the next day, so the most recent forecast is always "yesterday"
 
-forecast_gen_time <- ymd_hms(paste0(forecast_date, " 3:00:00"), tz = "America/Denver")
+forecast_gen_time <- ymd_hms(paste0(forecast_date + days(1), " 3:00:00"), tz = "America/Denver")
 
 y_min_val <- min(forecast_data$intake_q_swe_pred_min, na.rm = TRUE)
 y_max_val <- max(forecast_data$intake_q_swe_pred_max, na.rm = TRUE)
@@ -318,10 +398,8 @@ y_max_val <- max(forecast_data$intake_q_swe_pred_max, na.rm = TRUE)
 message("Step: Building TOC forecast plot...")
 title_suffix <- "Poudre River Intake TOC Forecast"
 p_forecast <- ggplot(forecast_data, aes(x = date_24h)) +
-  geom_ribbon(aes(ymin = intake_q_swe_pred_q75, ymax = intake_q_swe_pred_max), fill = col_red, alpha = 0.2) +
-  geom_ribbon(aes(ymin = intake_q_swe_pred, ymax = intake_q_swe_pred_q75), fill = col_orange, alpha = 0.2) +
-  geom_ribbon(aes(ymin = intake_q_swe_pred_q25, ymax = intake_q_swe_pred), fill = col_green, alpha = 0.2) +
-  geom_ribbon(aes(ymin = intake_q_swe_pred_min, ymax = intake_q_swe_pred_q25), fill = col_blue, alpha = 0.2) +
+  geom_ribbon(aes(ymin = intake_q_swe_pred_min, ymax = intake_q_swe_pred_max), fill = "lightblue", alpha = 0.5) +
+  geom_ribbon(aes(ymin = intake_q_swe_pred_q25, ymax = intake_q_swe_pred_q75), fill = "darkblue", alpha = 0.5) +
   geom_line(aes(y = intake_q_swe_pred), color = "black", linewidth = 1) +
   geom_vline(xintercept = with_tz(today_mt, tz = "America/Denver"), linetype = "dotted",
              color = "black", linewidth = 0.7) +
@@ -330,7 +408,7 @@ p_forecast <- ggplot(forecast_data, aes(x = date_24h)) +
   geom_hline(yintercept = c(2, 4, 8), linetype = "dashed", color = alpha("black", 0.4), linewidth = 0.5) +
   scale_x_date(date_labels = "%b %d", date_breaks = "1 day", name = "Date") +
   scale_y_continuous(limits = c(y_min_val - 0.2, y_max_val + 0.2), name = "Predicted TOC (mg/L)") +
-  labs(title = title_suffix, subtitle = paste0("Forecast Created: ", forecast_date, " 3:00 AM MT")) +
+  labs(title = title_suffix, subtitle = paste0("Forecast Created: ",forecast_gen_time)) +
   ROSS_theme+
   theme(
     plot.title = element_text(hjust = 0.5),
@@ -354,63 +432,70 @@ if (!forecast_current) {
 
 png_forecast_path <- tempfile(fileext = ".png")
 tryCatch({
-  ggsave(png_forecast_path, p_forecast, width = 8, height = 6, dpi = 300)
+  ggsave(png_forecast_path, p_forecast, width = 10, height = 6, dpi = 300)
 }, error = function(e) {
   stop(glue("Failed to save TOC forecast plot: {conditionMessage(e)}"))
 })
 
-forecast_img_b64 <- base64enc::base64encode(png_forecast_path)
-forecast_img_tag <- sprintf('<img src="data:image/png;base64,%s" style="max-width:100%%;" />', forecast_img_b64)
 message("Step: TOC forecast plot complete.")
 
 
 # --- Compose the HTML email ---
-message("Step: Composing HTML email body...")
-html_body <- sprintf('
-  <html>
-    <body style="font-family: sans-serif;">
-      <h1 style="font-size:28px; margin-bottom:4px;">Automated Upper Poudre Decision Support System Weekly Report</h1>
-      <h2 style="font-size:20px; margin-top:24px; margin-bottom:8px; color:#333;">Summary of Weekly Streamflow</h2>
-      <p>%s</p>
-      <h2 style="font-size:20px; margin-top:24px; margin-bottom:8px; color:#333;">Summary of Weekly Sensor Data</h2>
-      <p>%s</p>
-      <h2 style="font-size:20px; margin-top:24px; margin-bottom:8px; color:#333;">Summary of TOC Forecast</h2>
-      <p>%s</p>
-      <p style="font-size:14px; color:#333; margin-top:24px; line-height:1.5;">
-        If you have any questions, please contact the ROSS team (Sam Struthers: <a href="mailto:samuel.struthers@colostate.edu">samuel.struthers@colostate.edu</a> or Daniel Duncan: <a href="mailto:d.duncan@colostate.edu">d.duncan@colostate.edu</a>).<br>
-        This data is also available on the <a href="%s">ROSS PDSS Dashboard</a>.
-      </p>
-      <p style="font-size:14px; color:#333; margin-top:24px; line-height:1.5;">
-        Best Regards,<br>
-        ROSSyndicate PDSS Team
-      </p>
-      <p style="color:#888;font-size:12px; margin-top:32px;">Generated automatically via GitHub Actions.</p>
-    </body>
-  </html>', flow_img_tag, sensor_img_tag, forecast_img_tag, dashboard_link)
+message(glue("Step: Composing HTML email body (template: {email_template})..."))
 
+img_paths <- c(flow = png_flow_path, flow_forecast = png_flow_forecast_path, sensor = png_sensor_path, forecast = png_forecast_path)
+img_cids <- c(flow = "flow-plot",flow_forecast = "flow-forecast-plot", sensor = "sensor-plot", forecast = "forecast-plot")
 
-
-# --- Send via Resend API ---
-message("Step: Sending email via Resend API...")
-
-req <- request("https://api.resend.com/emails") |>
-  req_auth_bearer_token(resend_api_key) |>
-  req_body_json(list(
-    from = email_from,
-    to = email_to,
-    subject = paste("Weekly Report -", today_mt),
-    html = html_body
-  ))
-
-resp <- tryCatch({
-  req_perform(req)
-}, error = function(e) {
-  stop(glue("Failed to send email via Resend API: {conditionMessage(e)}"))
-})
-
-status <- resp_status(resp)
-if (status >= 200 && status < 300) {
-  message(glue("Success: Email sent via Resend (status {status})."))
+# Preview: embed PNGs directly so the HTML file is viewable in a browser.
+# Sending: reference inline attachments via cid: (Gmail blocks base64 data: images).
+img_src <- if (preview_only) {
+  lapply(img_paths, png_data_uri)
 } else {
-  stop(glue("Resend API returned non-success status {status}: {resp_body_string(resp)}"))
+  lapply(img_cids, function(x) paste0("cid:", x))
+}
+
+html_body <- build_email_html(
+  template = email_template,
+  flow_src = img_src$flow,
+  flow_forecast_src = img_src$flow_forecast,
+  sensor_src = img_src$sensor,
+  forecast_src = img_src$forecast,
+  dashboard_link = dashboard_link,
+  report_start = today_mt - days(7),
+  report_end = today_mt,
+  staff_email = staff_email
+)
+
+if (preview_only) {
+  # --- Preview only: write HTML, open in browser, do NOT send ---
+  preview_file <- write_email_preview(html_body, file = "email_preview.html")
+  message("PREVIEW_ONLY is TRUE: email was NOT sent.")
+} else {
+  # --- Send via Resend API ---
+  message("Step: Sending email via Resend API...")
+
+  attachments <- unname(Map(resend_inline_attachment, img_paths, img_cids))
+
+  req <- request("https://api.resend.com/emails") |>
+    req_auth_bearer_token(resend_api_key) |>
+    req_body_json(list(
+      from = email_from,
+      to = email_to,
+      subject = paste("Weekly Report -", today_mt),
+      html = html_body,
+      attachments = attachments
+    ))
+
+  resp <- tryCatch({
+    req_perform(req)
+  }, error = function(e) {
+    stop(glue("Failed to send email via Resend API: {conditionMessage(e)}"))
+  })
+
+  status <- resp_status(resp)
+  if (status >= 200 && status < 300) {
+    message(glue("Success: Email sent via Resend (status {status})."))
+  } else {
+    stop(glue("Resend API returned non-success status {status}: {resp_body_string(resp)}"))
+  }
 }
