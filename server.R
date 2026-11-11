@@ -1139,37 +1139,14 @@ server <- function(input, output, session) {
     ggplotly(p)
   })
 
-  # Conditionally show SNOTEL plot between October and July
+  # SNOTEL card is always shown, regardless of time of year
   output$snotel_card <- renderUI({
-
-    current_month <- month(Sys.Date())
-
-    # Show if month is between October (10) and July (7)
-    if(current_month > 10 || current_month < 6) {
-      card(
-        card_header("Current SNOTEL data for CLP Basin"),
-        card_body(
-          plotlyOutput("snotel_plot")
-        )
+    card(
+      card_header("Current SNOTEL data for CLP Basin"),
+      card_body(
+        plotlyOutput("snotel_plot")
       )
-    } else {
-      # Return empty UI if outside of October-July
-
-
-      card(
-        card_header("Flows Historical Stats"),
-        #TODO: change this to Dropdown from available sites
-        pickerInput("site_title_selected",
-                    label = "Select Site to View Historical Conditions:",
-                    choices = cdwr_lookup_table$site_title,
-                    selected = c("Canyon Mouth")
-        ),
-        card_body(
-          plotlyOutput("clp_rainbow_plot")
-        )
-      )
-
-    }
+    )
   })
 
   # Generate SNOTEL plot (will only be displayed if the card is visible)
@@ -1178,8 +1155,9 @@ server <- function(input, output, session) {
     req(values$clp_snotel_data)
     clp_snotel_data <- values$clp_snotel_data
 
-    #grab last year
-    cur_year = year(Sys.Date())
+    # SNOTEL columns are water years (Oct 1 - Sep 30), so from October on
+    # the current water year is next calendar year (e.g. Nov 2026 -> WY 2027)
+    cur_year = year(Sys.Date()) + as.integer(month(Sys.Date()) >= 10)
 
     # Reshape the data from wide to long format
     clp_snotel_non_stats <- clp_snotel_data %>%
@@ -1201,9 +1179,12 @@ server <- function(input, output, session) {
       filter(year == as.character(cur_year))%>%
       select(date, swe, full_date)
 
+    # most recent available observation up to today (NA if none yet)
     cur_swe <- curr_year%>%
-      filter(full_date == Sys.Date())%>%
+      filter(!is.na(swe), !is.na(full_date), full_date <= Sys.Date())%>%
+      arrange(full_date)%>%
       pull(swe)
+    cur_swe <- if (length(cur_swe) > 0) tail(cur_swe, 1) else NA_real_
 
     recent_years <- clp_snotel_non_stats%>%
       filter(year <= as.character(cur_year-1) & year >= as.character(cur_year-6))%>%
@@ -1258,11 +1239,13 @@ server <- function(input, output, session) {
       )
     days_until = median_peak%>%
       pull(days_until)
+    days_until = if (length(days_until) > 0) days_until[1] else NA
 
     #grab the median peak swe percent
     perc_peak = median_peak%>%
       filter(full_date == Sys.Date())%>%
       pull(perc_peak)
+    perc_peak = if (length(perc_peak) > 0) perc_peak[1] else NA
 
     #grab the median percent
 
@@ -1271,6 +1254,7 @@ server <- function(input, output, session) {
       filter(stat == "Median ('91-'20)" & full_date == Sys.Date())%>%
       mutate(perc_med = round((cur_swe/swe)*100, 0))%>%
       pull(perc_med)
+    perc_med = if (length(perc_med) > 0) perc_med[1] else NA
 
 
     #create a plotly line plot of each stat over a year
@@ -1367,7 +1351,7 @@ server <- function(input, output, session) {
               "Current as of ", Sys.Date(), ":<br>",
               "Current Basin SWE:", cur_swe, "<br>",
               "% of Median:", perc_med , " <br>",
-              "% Median Peak:", pull(median_peak, name = perc_peak), " <br>",
+              "% Median Peak:", perc_peak, " <br>",
               "Days Until Median Peak:",days_until," <br>"
             ),
             showarrow = FALSE,bordercolor = "black",borderwidth = 1,bgcolor = "white",xanchor = "left"
