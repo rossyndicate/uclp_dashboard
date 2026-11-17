@@ -246,7 +246,7 @@ ui <-  #secure_app( #wrap in secure_app for authentication with shiny_manager. U
                       plotlyOutput("seven_day_q_plot")
                     )
                   ),
-                  # Conditional SNOTEL card that will only show between October and July
+                  # SNOTEL card (always shown)
                   uiOutput("snotel_card")
                 ),
                 # Main Map Card

@@ -49,6 +49,7 @@ server <- function(input, output, session) {
     all_data = NULL,
     flow_sites = NULL,
     clp_snotel_data = NULL,
+    snotel_error = NULL,
     canyon_q = NULL,
     last_refresh = Sys.time()
   )
@@ -322,14 +323,26 @@ server <- function(input, output, session) {
       home_state$set_status("snotel_api", "loading")
       incProgress(0.1, detail = "Retrieving SNOTEL snowpack data...")
       print("Pulling SNOTEL data...")
+      values$snotel_error <- NULL
+      snotel_warnings <- character(0)
       tryCatch({
         clp_snotel_url <- "https://nwcc-apps.sc.egov.usda.gov/awdb/basin-plots/POR/WTEQ/assocHUC8/10190007_Cache_La_Poudre.csv"
-        snotel_df <- read.csv(clp_snotel_url)
+        # keep warnings: the HTTP status (e.g. 502) is reported as a warning
+        snotel_df <- withCallingHandlers(
+          read.csv(clp_snotel_url),
+          warning = function(w) {
+            snotel_warnings <<- c(snotel_warnings, conditionMessage(w))
+            invokeRestart("muffleWarning")
+          }
+        )
+        if (nrow(snotel_df) == 0) stop("The SNOTEL download contained no rows.")
         names(snotel_df) <- gsub("^X", "", names(snotel_df))
         values$clp_snotel_data <- snotel_df
         print("SNOTEL data pulled successfully.")
       }, error = function(e) {
-        print(paste("SNOTEL Error:", e$message))
+        msg <- paste(c(conditionMessage(e), snotel_warnings), collapse = " | ")
+        values$snotel_error <- msg
+        print(paste("SNOTEL Error:", msg))
       })
       home_state$set_status("snotel_api", "done")
 
@@ -1175,11 +1188,49 @@ server <- function(input, output, session) {
   # Generate SNOTEL plot (will only be displayed if the card is visible)
   #TODO: Functionalize similar to clp rainbow plot to clean up server and make it more modular
   output$snotel_plot <- renderPlotly({
-    req(values$clp_snotel_data)
+
+    # Placeholder plot that tells the user why SNOTEL is not displayed.
+    # Plotly does not wrap annotation text, so wrap (and hard-break long
+    # unbroken strings like URLs) to a fixed width ourselves.
+    wrap_msg <- function(x, width = 45) {
+      lines <- unlist(strwrap(x, width = width))
+      lines <- unlist(lapply(lines, function(l) {
+        if (nchar(l) == 0) "" else regmatches(l, gregexpr(paste0(".{1,", width, "}"), l))[[1]]
+      }))
+      paste(htmltools::htmlEscape(lines), collapse = "<br>")
+    }
+
+    snotel_error_plot <- function(heading, detail = NULL) {
+      txt <- paste0("<b>SNOTEL plot unavailable</b><br>", wrap_msg(heading))
+      if (!is.null(detail)) txt <- paste0(txt, "<br><br>", wrap_msg(detail))
+      plot_ly(type = "scatter", mode = "markers") %>%
+        layout(
+          xaxis = list(visible = FALSE),
+          yaxis = list(visible = FALSE),
+          margin = list(l = 20, r = 20, t = 20, b = 20),
+          annotations = list(list(
+            text = txt,
+            x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+            showarrow = FALSE, align = "center", font = list(size = 14)
+          ))
+        )
+    }
+
+    if (is.null(values$clp_snotel_data)) {
+      if (!is.null(values$snotel_error)) {
+        return(snotel_error_plot(
+          "Could not download data from the USDA NRCS AWDB:",
+          values$snotel_error))
+      }
+      return(snotel_error_plot("SNOTEL data has not been loaded yet."))
+    }
+
+    tryCatch({
     clp_snotel_data <- values$clp_snotel_data
 
-    #grab last year
-    cur_year = year(Sys.Date())
+    # SNOTEL columns are water years (Oct 1 - Sep 30), so from October on
+    # the current water year is next calendar year (e.g. Nov 2026 -> WY 2027)
+    cur_year = year(Sys.Date()) + as.integer(month(Sys.Date()) >= 10)
 
     # Reshape the data from wide to long format
     clp_snotel_non_stats <- clp_snotel_data %>%
@@ -1201,9 +1252,17 @@ server <- function(input, output, session) {
       filter(year == as.character(cur_year))%>%
       select(date, swe, full_date)
 
-    cur_swe <- curr_year%>%
-      filter(full_date == Sys.Date())%>%
-      pull(swe)
+    # Most recent available observation up to today, and the date it is from.
+    # obs_date is tracked so an old reading is never presented as today's.
+    latest_obs <- curr_year%>%
+      filter(!is.na(swe), !is.na(full_date), full_date <= Sys.Date())%>%
+      arrange(full_date)%>%
+      tail(1)
+    cur_swe  <- if (nrow(latest_obs) > 0) latest_obs$swe else NA_real_
+    obs_date <- if (nrow(latest_obs) > 0) latest_obs$full_date else as.Date(NA)
+    max_stale_days <- 2
+    days_old <- as.numeric(Sys.Date() - obs_date)   # NA if no reading
+    is_stale <- is.na(days_old) || days_old > max_stale_days
 
     recent_years <- clp_snotel_non_stats%>%
       filter(year <= as.character(cur_year-1) & year >= as.character(cur_year-6))%>%
@@ -1258,19 +1317,24 @@ server <- function(input, output, session) {
       )
     days_until = median_peak%>%
       pull(days_until)
+    days_until = if (length(days_until) > 0) days_until[1] else NA
 
     #grab the median peak swe percent
+    # median_peak has a single row (the peak date), so use it directly rather
+    # than filtering to today's date
     perc_peak = median_peak%>%
-      filter(full_date == Sys.Date())%>%
       pull(perc_peak)
+    perc_peak = if (length(perc_peak) > 0) perc_peak[1] else NA
 
     #grab the median percent
 
 
+    # compare against the median for the reading's own date, not today's
     perc_med = stats_data%>%
-      filter(stat == "Median ('91-'20)" & full_date == Sys.Date())%>%
+      filter(stat == "Median ('91-'20)" & full_date == obs_date)%>%
       mutate(perc_med = round((cur_swe/swe)*100, 0))%>%
       pull(perc_med)
+    perc_med = if (length(perc_med) > 0) perc_med[1] else NA
 
 
     #create a plotly line plot of each stat over a year
@@ -1364,11 +1428,19 @@ server <- function(input, output, session) {
           list(
             x = min(stats_data$full_date, na.rm = T) + 15, y = 32.5,
             text = paste0(
-              "Current as of ", Sys.Date(), ":<br>",
-              "Current Basin SWE:", cur_swe, "<br>",
-              "% of Median:", perc_med , " <br>",
-              "% Median Peak:", pull(median_peak, name = perc_peak), " <br>",
-              "Days Until Median Peak:",days_until," <br>"
+              if (is.na(obs_date)) {
+                "<b>No current SNOTEL reading available</b><br>"
+              } else {
+                paste0("Latest reading: ", obs_date, "<br>",
+                       "Basin SWE: ", round(cur_swe, 1), " in<br>",
+                       "% of Median: ", perc_med, "<br>",
+                       "% Median Peak: ", perc_peak, "<br>")
+              },
+              if (is_stale) {
+                if (is.na(obs_date)) "" else
+                  paste0("<b>WARNING: reading is ", days_old, " days old</b><br>")
+              } else "",
+              "Days Until Median Peak: ", days_until, "<br>"
             ),
             showarrow = FALSE,bordercolor = "black",borderwidth = 1,bgcolor = "white",xanchor = "left"
           )
@@ -1377,6 +1449,13 @@ server <- function(input, output, session) {
       )
 
     stats_plot
+
+    }, error = function(e) {
+      print(paste("SNOTEL plot error:", conditionMessage(e)))
+      snotel_error_plot(
+        "The SNOTEL data loaded but the plot failed to build:",
+        conditionMessage(e))
+    })
 
   })
 
